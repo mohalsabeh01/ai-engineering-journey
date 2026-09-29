@@ -71,7 +71,7 @@ available_functions = {
 
 tools = [order_tool, driver_tool]
 
-
+# --- Agenten-Logik ---
 def run_agent(user_input, max_steps=5):
     total_cost = 0.0
     logging.info(f"Neue Anfrage: {user_input}")
