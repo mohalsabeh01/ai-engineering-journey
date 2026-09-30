@@ -1,7 +1,7 @@
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from dotenv import load_dotenv
 import os
+import json
 import logging
 
 load_dotenv()
@@ -13,7 +13,7 @@ logging.basicConfig(
     encoding="utf-8"
 )
 
-# --- Retry sichtbar machen ---
+# --- Retry sichtbar machen (unverändert, das openai-SDK nutzt ebenfalls httpx) ---
 RETRY_SIGNALS = ("429", "500", "502", "503", "504")
 
 
@@ -24,32 +24,29 @@ def is_retry_signal(record):
 console = logging.StreamHandler()
 console.setFormatter(logging.Formatter("[Retry] Server-Problem, neuer Versuch folgt: %(message)s"))
 console.addFilter(is_retry_signal)
-logging.getLogger("httpx").addHandler(console)
+for logger_name in ("httpx", "httpx2"):
+    logging.getLogger(logger_name).addHandler(console)
 
-# --- Client mit Retry-Einstellungen ---
-# Hinweis (getestet am 30.09.2026): client.interactions scheint diese
-# Einstellungen zu ignorieren. Bei 429 wurde ~28s gewartet (max_delay=20),
-# vermutlich folgt das SDK der Wartezeit, die der Server vorgibt.
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY"),
-    http_options=types.HttpOptions(
-        retry_options=types.HttpRetryOptions(
-            attempts=3,
-            initial_delay=2.0,
-            max_delay=20.0,
-            http_status_codes=[429, 500, 502, 503, 504],
-        )
-    ),
+# --- NEU: Groq über das OpenAI-kompatible SDK ---
+client = OpenAI(
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1",
+    max_retries=2,  # 1 Versuch + max. 2 Wiederholungen (wird im Log überprüft)
 )
 
-PRICE_PER_MILLION_INPUT = 0.075
-PRICE_PER_MILLION_OUTPUT = 0.30
+# Modellname aus .env (GROQ_MODEL), sonst Standard. Modelle werden oft abgeschaltet,
+# deshalb steht der Name nicht fest im Code.
+MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
+# Free Tier: kostenlos. Preise nur eintragen, falls später bezahlt wird.
+PRICE_PER_MILLION_INPUT = 0.0
+PRICE_PER_MILLION_OUTPUT = 0.0
 
 
 def calculate_cost(usage):
-    output_tokens = usage.total_output_tokens + usage.total_thought_tokens
-    input_cost = (usage.total_input_tokens / 1_000_000) * PRICE_PER_MILLION_INPUT
-    output_cost = (output_tokens / 1_000_000) * PRICE_PER_MILLION_OUTPUT
+    # NEU: andere Feldnamen als bei Gemini
+    input_cost = (usage.prompt_tokens / 1_000_000) * PRICE_PER_MILLION_INPUT
+    output_cost = (usage.completion_tokens / 1_000_000) * PRICE_PER_MILLION_OUTPUT
     return input_cost + output_cost
 
 
@@ -66,29 +63,34 @@ def get_driver_info(driver_id: str) -> str:
     return fake_drivers.get(driver_id, "Fahrer nicht gefunden")
 
 
+# NEU: OpenAI-Format verschachtelt die Definition unter "function"
 order_tool = {
     "type": "function",
-    "name": "get_order_status",
-    "description": "Gibt den Lieferstatus einer Bestellung zurück",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "order_id": {"type": "string", "description": "Die Bestellnummer"}
+    "function": {
+        "name": "get_order_status",
+        "description": "Gibt den Lieferstatus einer Bestellung zurück",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "order_id": {"type": "string", "description": "Die Bestellnummer"}
+            },
+            "required": ["order_id"],
         },
-        "required": ["order_id"],
     },
 }
 
 driver_tool = {
     "type": "function",
-    "name": "get_driver_info",
-    "description": "Gibt Informationen über einen Fahrer zurück",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "driver_id": {"type": "string", "description": "Die Fahrer-ID"}
+    "function": {
+        "name": "get_driver_info",
+        "description": "Gibt Informationen über einen Fahrer zurück",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "driver_id": {"type": "string", "description": "Die Fahrer-ID"}
+            },
+            "required": ["driver_id"],
         },
-        "required": ["driver_id"],
     },
 }
 
@@ -99,64 +101,82 @@ available_functions = {
 
 tools = [order_tool, driver_tool]
 
+
 # --- Agenten-Logik ---
 def run_agent(user_input, max_steps=5):
     total_cost = 0.0
-    tool_calls = []  # NEU: merkt sich jeden Tool-Aufruf für Evals
-    logging.info(f"Neue Anfrage: {user_input}")
+    tool_calls = []
+    logging.info(f"Neue Anfrage [{MODEL}]: {user_input}")
 
-    interaction = client.interactions.create(
-        model="gemini-3.6-flash",
-        input=user_input,
+    # NEU: Wir verwalten den Gesprächsverlauf selbst (kein previous_interaction_id)
+    messages = [{"role": "user", "content": user_input}]
+
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=messages,
         tools=tools,
     )
-    total_cost += calculate_cost(interaction.usage)
+    total_cost += calculate_cost(response.usage)
 
     steps_taken = 0
     while steps_taken < max_steps:
-        function_calls = [s for s in interaction.steps if s.type == "function_call"]
+        message = response.choices[0].message
 
-        if not function_calls:
+        if not message.tool_calls:
             logging.info(f"Kosten dieser Anfrage: ${total_cost:.6f}")
             print(f"\nGesamtkosten dieser Anfrage: ${total_cost:.6f}")
-            # NEU: Dictionary statt nur Text
             return {
-                "answer": interaction.output_text,
+                "answer": message.content,
                 "tool_calls": tool_calls,
                 "cost": total_cost,
             }
 
-        results_input = []
-        for call in function_calls:
-            tool_calls.append({"name": call.name, "args": dict(call.arguments)})  # NEU
+        # NEU: Die Tool-Anfrage des Modells kommt selbst in den Verlauf
+        messages.append({
+            "role": "assistant",
+            "content": message.content or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in message.tool_calls
+            ],
+        })
+
+        for tc in message.tool_calls:
+            name = tc.function.name
+            # NEU: Argumente kommen als JSON-Text, nicht als Dictionary
             try:
-                func = available_functions[call.name]
-                result = func(**call.arguments)
-                logging.info(
-                    f"Tool: {call.name} | Args: {call.arguments} | Result: {result}"
-                )
-                print(f"[Schritt {steps_taken + 1}] {call.name}({call.arguments}) -> {result}")
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append({"name": name, "args": args})
+
+            try:
+                func = available_functions[name]
+                result = func(**args)
+                logging.info(f"Tool: {name} | Args: {args} | Result: {result}")
+                print(f"[Schritt {steps_taken + 1}] {name}({args}) -> {result}")
             except Exception as e:
                 result = f"Fehler: {e}"
-                logging.error(f"Tool {call.name} fehlgeschlagen: {e}")
-                print(f"[Schritt {steps_taken + 1}] {call.name} fehlgeschlagen: {e}")
+                logging.error(f"Tool {name} fehlgeschlagen: {e}")
+                print(f"[Schritt {steps_taken + 1}] {name} fehlgeschlagen: {e}")
 
-            results_input.append(
-                {
-                    "type": "function_result",
-                    "name": call.name,
-                    "call_id": call.id,
-                    "result": [{"type": "text", "text": result}],
-                }
-            )
+            # NEU: Jedes Ergebnis als eigene "tool"-Nachricht mit passender ID
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
 
-        interaction = client.interactions.create(
-            model="gemini-3.6-flash",
-            previous_interaction_id=interaction.id,
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,  # der komplette Verlauf, jedes Mal
             tools=tools,
-            input=results_input,
         )
-        total_cost += calculate_cost(interaction.usage)
+        total_cost += calculate_cost(response.usage)
         steps_taken += 1
 
     logging.warning("Maximale Anzahl an Schritten erreicht.")

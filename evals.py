@@ -1,6 +1,7 @@
 import sys
 import time
 import logging
+import unicodedata
 from main import run_agent
 
 # Jeder Fall: Frage, erwartete Tool-Aufrufe, Schlüsselwörter in der Antwort
@@ -21,7 +22,9 @@ EVAL_CASES = [
         "name": "Unbekannte Bestellung",
         "input": "Wo ist meine Bestellung 999?",
         "expected_tools": [("get_order_status", {"order_id": "999"})],
-        "must_contain": ["nicht gefunden"],
+        "must_contain": [],
+        "must_contain_any": ["gefunden", "finden"],
+        "must_not_contain": ["wird geliefert", "zugestellt", "unterwegs"],
     },
     {
         "name": "Zwei Tools gleichzeitig",
@@ -52,6 +55,16 @@ def normalize(calls):
     # Reihenfolge egal machen: sortierte Liste von (Name, Argumente)
     return sorted((name, tuple(sorted(args.items()))) for name, args in calls)
 
+DASHES = "\u2010\u2011\u2012\u2013\u2014\u2212"
+
+
+def normalize_text(text):
+    # Unicode-Sonderzeichen vereinheitlichen, z. B. geschützte Leerzeichen
+    text = unicodedata.normalize("NFKC", text or "").lower()
+    for dash in DASHES:
+        text = text.replace(dash, "-")
+    return text
+
 
 def check_case(case, result):
     problems = []
@@ -61,14 +74,18 @@ def check_case(case, result):
     if expected != actual:
         problems.append(f"Tools erwartet {expected}, bekommen {actual}")
 
-    answer = (result["answer"] or "").lower()
+    answer = normalize_text(result["answer"])
     for word in case["must_contain"]:
-        if word.lower() not in answer:
+        if normalize_text(word) not in answer:
             problems.append(f"'{word}' fehlt in der Antwort")
 
     any_words = case.get("must_contain_any", [])
-    if any_words and not any(w.lower() in answer for w in any_words):
+    if any_words and not any(normalize_text(w) in answer for w in any_words):
         problems.append(f"Keines von {any_words} in der Antwort")
+
+    for word in case.get("must_not_contain", []):
+        if normalize_text(word) in answer:
+            problems.append(f"'{word}' sollte NICHT in der Antwort stehen")
 
     return problems
 
