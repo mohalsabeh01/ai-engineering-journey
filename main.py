@@ -13,7 +13,7 @@ logging.basicConfig(
     encoding="utf-8"
 )
 
-# --- Retry sichtbar machen (NEU) ---
+# --- Retry sichtbar machen ---
 RETRY_SIGNALS = ("429", "500", "502", "503", "504")
 
 
@@ -26,7 +26,10 @@ console.setFormatter(logging.Formatter("[Retry] Server-Problem, neuer Versuch fo
 console.addFilter(is_retry_signal)
 logging.getLogger("httpx").addHandler(console)
 
-# --- Client mit bewusst eingestelltem Retry (NEU) ---
+# --- Client mit Retry-Einstellungen ---
+# Hinweis (getestet am 30.09.2026): client.interactions scheint diese
+# Einstellungen zu ignorieren. Bei 429 wurde ~28s gewartet (max_delay=20),
+# vermutlich folgt das SDK der Wartezeit, die der Server vorgibt.
 client = genai.Client(
     api_key=os.getenv("GEMINI_API_KEY"),
     http_options=types.HttpOptions(
@@ -99,6 +102,7 @@ tools = [order_tool, driver_tool]
 # --- Agenten-Logik ---
 def run_agent(user_input, max_steps=5):
     total_cost = 0.0
+    tool_calls = []  # NEU: merkt sich jeden Tool-Aufruf für Evals
     logging.info(f"Neue Anfrage: {user_input}")
 
     interaction = client.interactions.create(
@@ -115,10 +119,16 @@ def run_agent(user_input, max_steps=5):
         if not function_calls:
             logging.info(f"Kosten dieser Anfrage: ${total_cost:.6f}")
             print(f"\nGesamtkosten dieser Anfrage: ${total_cost:.6f}")
-            return interaction.output_text
+            # NEU: Dictionary statt nur Text
+            return {
+                "answer": interaction.output_text,
+                "tool_calls": tool_calls,
+                "cost": total_cost,
+            }
 
         results_input = []
         for call in function_calls:
+            tool_calls.append({"name": call.name, "args": dict(call.arguments)})  # NEU
             try:
                 func = available_functions[call.name]
                 result = func(**call.arguments)
@@ -152,15 +162,19 @@ def run_agent(user_input, max_steps=5):
     logging.warning("Maximale Anzahl an Schritten erreicht.")
     logging.info(f"Kosten dieser Anfrage: ${total_cost:.6f}")
     print(f"\nGesamtkosten dieser Anfrage: ${total_cost:.6f}")
-    return "Maximale Anzahl an Schritten erreicht."
+    return {
+        "answer": "Maximale Anzahl an Schritten erreicht.",
+        "tool_calls": tool_calls,
+        "cost": total_cost,
+    }
 
 
-# --- Verwendung (NEU: sauberer Abbruch bei endgültigem Fehler) ---
+# --- Verwendung ---
 if __name__ == "__main__":
     try:
-        antwort = run_agent("Wie ist der Status von Bestellung 123 und was weißt du über Fahrer d1?")
-        print(f"\nFinale Antwort: {antwort}")
+        ergebnis = run_agent("Wie ist der Status von Bestellung 123 und was weißt du über Fahrer d1?")
+        print(f"\nFinale Antwort: {ergebnis['answer']}")
     except Exception as e:
         logging.error(f"Anfrage endgültig fehlgeschlagen: {e}")
-        print("\nDie Anfrage ist nach mehreren Versuchen fehlgeschlagen.")
+        print("\nDie Anfrage ist fehlgeschlagen.")
         print("Details stehen in agent.log.")
