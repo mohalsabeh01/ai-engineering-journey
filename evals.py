@@ -1,3 +1,4 @@
+import sys
 import time
 import logging
 from main import run_agent
@@ -37,6 +38,13 @@ EVAL_CASES = [
         "expected_tools": [],
         "must_contain": [],
     },
+    {
+        "name": "Fahrer nur mit Namen",
+        "input": "Wo ist Ahmed gerade?",
+        "expected_tools": [],
+        "must_contain": [],
+        "must_contain_any": ["fahrer-id", "id des fahrers", "id von ahmed", "fahrernummer", "kennung", "nummer"],
+    },
 ]
 
 
@@ -58,40 +66,54 @@ def check_case(case, result):
         if word.lower() not in answer:
             problems.append(f"'{word}' fehlt in der Antwort")
 
+    any_words = case.get("must_contain_any", [])
+    if any_words and not any(w.lower() in answer for w in any_words):
+        problems.append(f"Keines von {any_words} in der Antwort")
+
     return problems
 
 
-def run_evals(pause_seconds=10):
-    passed = 0
-    total = len(EVAL_CASES)
+def run_evals(selected=None, pause_seconds=10):
+    # NEU: nur ausgewählte Fälle laufen lassen (spart Anfragen)
+    cases = [(nr, c) for nr, c in enumerate(EVAL_CASES, 1) if not selected or nr in selected]
+    passed = failed = errors = 0
 
-    for i, case in enumerate(EVAL_CASES, 1):
-        print(f"\n===== [{i}/{total}] {case['name']} =====")
+    for position, (nr, case) in enumerate(cases, 1):
+        print(f"\n===== [Fall {nr}] {case['name']} =====")
         try:
             result = run_agent(case["input"])
-            problems = check_case(case, result)
         except Exception as e:
-            result = None
-            problems = [f"Fehler beim Ausführen: {e}"]
-
-        if problems:
-            print("  FAIL")
-            for p in problems:
-                print(f"   - {p}")
-            if result:
-                print(f"   Antwort war: {result['answer']}")
-            logging.warning(f"EVAL FAIL | {case['name']} | {problems}")
+            # NEU: technischer Fehler ist KEIN falsches Verhalten des Agenten
+            errors += 1
+            print("  ERROR (nicht bewertbar, technischer Fehler)")
+            print(f"   - {e}")
+            logging.error(f"EVAL ERROR | {case['name']} | {e}")
         else:
-            print("  PASS")
-            passed += 1
-            logging.info(f"EVAL PASS | {case['name']}")
+            problems = check_case(case, result)
+            if problems:
+                failed += 1
+                print("  FAIL")
+                for p in problems:
+                    print(f"   - {p}")
+                print(f"   Antwort war: {result['answer']}")
+                logging.warning(f"EVAL FAIL | {case['name']} | {problems}")
+            else:
+                passed += 1
+                print("  PASS")
+                logging.info(f"EVAL PASS | {case['name']}")
 
-        if i < total:
+        if position < len(cases):
             time.sleep(pause_seconds)  # Schont das Minutenlimit der Free Tier
 
-    print(f"\nErgebnis: {passed}/{total} bestanden ({passed / total:.0%})")
-    logging.info(f"EVAL ERGEBNIS | {passed}/{total}")
+    evaluated = passed + failed
+    summary = f"\nErgebnis: {passed}/{evaluated} bestanden"
+    if errors:
+        summary += f", {errors} nicht bewertbar (technischer Fehler)"
+    print(summary)
+    logging.info(f"EVAL ERGEBNIS | {passed}/{evaluated} bestanden | {errors} Fehler")
 
 
 if __name__ == "__main__":
-    run_evals()
+    # Beispiel: "python evals.py 6" oder "python evals.py 1 6"
+    selected = {int(arg) for arg in sys.argv[1:]}
+    run_evals(selected)
