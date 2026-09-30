@@ -1,4 +1,5 @@
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 import os
 import logging
@@ -12,7 +13,31 @@ logging.basicConfig(
     encoding="utf-8"
 )
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# --- Retry sichtbar machen (NEU) ---
+RETRY_SIGNALS = ("429", "500", "502", "503", "504")
+
+
+def is_retry_signal(record):
+    return any(code in record.getMessage() for code in RETRY_SIGNALS)
+
+
+console = logging.StreamHandler()
+console.setFormatter(logging.Formatter("[Retry] Server-Problem, neuer Versuch folgt: %(message)s"))
+console.addFilter(is_retry_signal)
+logging.getLogger("httpx").addHandler(console)
+
+# --- Client mit bewusst eingestelltem Retry (NEU) ---
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY"),
+    http_options=types.HttpOptions(
+        retry_options=types.HttpRetryOptions(
+            attempts=3,
+            initial_delay=2.0,
+            max_delay=20.0,
+            http_status_codes=[429, 500, 502, 503, 504],
+        )
+    ),
+)
 
 PRICE_PER_MILLION_INPUT = 0.075
 PRICE_PER_MILLION_OUTPUT = 0.30
@@ -130,6 +155,12 @@ def run_agent(user_input, max_steps=5):
     return "Maximale Anzahl an Schritten erreicht."
 
 
-# --- Verwendung ---
-antwort = run_agent("Wie ist der Status von Bestellung 123 und was weißt du über Fahrer d1?")
-print(f"\nFinale Antwort: {antwort}")
+# --- Verwendung (NEU: sauberer Abbruch bei endgültigem Fehler) ---
+if __name__ == "__main__":
+    try:
+        antwort = run_agent("Wie ist der Status von Bestellung 123 und was weißt du über Fahrer d1?")
+        print(f"\nFinale Antwort: {antwort}")
+    except Exception as e:
+        logging.error(f"Anfrage endgültig fehlgeschlagen: {e}")
+        print("\nDie Anfrage ist nach mehreren Versuchen fehlgeschlagen.")
+        print("Details stehen in agent.log.")
