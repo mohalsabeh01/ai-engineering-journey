@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 import os
 import json
 import logging
+import re
+
 
 load_dotenv()
 
@@ -13,12 +15,12 @@ logging.basicConfig(
     encoding="utf-8"
 )
 
-# --- Retry sichtbar machen (unverändert, das openai-SDK nutzt ebenfalls httpx) ---
-RETRY_SIGNALS = ("429", "500", "502", "503", "504")
+# --- Retry sichtbar machen (httpx für Gemini, httpx2 für das openai-SDK) ---
+RETRY_PATTERN = re.compile(r"HTTP/[\d.]+ (429|500|502|503|504)")
 
 
 def is_retry_signal(record):
-    return any(code in record.getMessage() for code in RETRY_SIGNALS)
+    return bool(RETRY_PATTERN.search(record.getMessage()))
 
 
 console = logging.StreamHandler()
