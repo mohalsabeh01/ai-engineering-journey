@@ -46,7 +46,7 @@ PRICE_PER_MILLION_OUTPUT = 0.0
 
 
 def calculate_cost(usage):
-    # NEU: andere Feldnamen als bei Gemini
+    logging.info(f"Tokens: input={usage.prompt_tokens}, output={usage.completion_tokens}")
     input_cost = (usage.prompt_tokens / 1_000_000) * PRICE_PER_MILLION_INPUT
     output_cost = (usage.completion_tokens / 1_000_000) * PRICE_PER_MILLION_OUTPUT
     return input_cost + output_cost
@@ -196,6 +196,7 @@ if __name__ == "__main__":
     try:
         ergebnis = run_agent("Wie ist der Status von Bestellung 123 und was weißt du über Fahrer d1?")
         print(f"\nFinale Antwort: {ergebnis['answer']}")
+        print(f"Tools: {[tc['name'] for tc in ergebnis['tool_calls']]}")
     except Exception as e:
         logging.error(f"Anfrage endgültig fehlgeschlagen: {e}")
         print("\nDie Anfrage ist fehlgeschlagen.")
