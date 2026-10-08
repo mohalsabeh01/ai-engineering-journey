@@ -39,6 +39,16 @@ client = OpenAI(
 # Modellname aus .env (GROQ_MODEL), sonst Standard. Modelle werden oft abgeschaltet,
 # deshalb steht der Name nicht fest im Code.
 MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+# NEU: Arbeitsvertrag für das Modell, steht vor jeder Unterhaltung
+SYSTEM_PROMPT = (
+    "Du bist ein Assistent für einen Lieferdienst. "
+    "Du kannst nur zwei Dinge: den Status einer Bestellung abfragen (dafür brauchst du die Bestellnummer) "
+    "und Informationen zu einem Fahrer abfragen (dafür brauchst du die Fahrer-ID). "
+    "Erfinde keine Informationen. Wenn du etwas mit deinen Tools nicht herausfinden kannst, "
+    "Du kennst keine Lieferzeiten und keine Kontaktdaten. Wenn danach gefragt wird, sag ehrlich, dass du das nicht weißt, "
+    "und sag, wobei du helfen kannst. "
+    "Wenn die Bestellnummer oder die Fahrer-ID fehlt, frag danach."
+)
 
 # Free Tier: kostenlos. Preise nur eintragen, falls später bezahlt wird.
 PRICE_PER_MILLION_INPUT = 0.0
@@ -85,7 +95,7 @@ driver_tool = {
     "type": "function",
     "function": {
         "name": "get_driver_info",
-        "description": "Gibt Informationen über einen Fahrer zurück",
+        "description": "Gibt Name, Fahrzeug und Status eines Fahrers zurück. Keine Telefonnummer, keine Adresse.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -111,7 +121,10 @@ def run_agent(user_input, max_steps=5):
     logging.info(f"Neue Anfrage [{MODEL}]: {user_input}")
 
     # NEU: Wir verwalten den Gesprächsverlauf selbst (kein previous_interaction_id)
-    messages = [{"role": "user", "content": user_input}]
+    messages = [
+    {"role": "system", "content": SYSTEM_PROMPT},
+    {"role": "user", "content": user_input},
+    ]
 
     response = client.chat.completions.create(
         model=MODEL,

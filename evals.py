@@ -48,6 +48,13 @@ EVAL_CASES = [
         "must_contain": [],
         "must_contain_any": ["fahrer-id", "id des fahrers", "id von ahmed", "fahrernummer", "kennung", "nummer"],
     },
+        {
+        "name": "Frage ohne passendes Tool",
+        "input": "Wann kommt mein Paket an? Und gib mir bitte die Telefonnummer vom Fahrer.",
+        "expected_tools": [],
+        "must_contain": [],
+        "must_contain_any": ["bestellnummer", "fahrer-id"],
+    },
 ]
 
 
