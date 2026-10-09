@@ -167,7 +167,6 @@ def run_agent(user_input, max_steps=5):
                 args = json.loads(tc.function.arguments)
             except json.JSONDecodeError:
                 args = {}
-            tool_calls.append({"name": name, "args": args})
 
             try:
                 func = available_functions[name]
@@ -178,6 +177,8 @@ def run_agent(user_input, max_steps=5):
                 result = f"Fehler: {e}"
                 logging.error(f"Tool {name} fehlgeschlagen: {e}")
                 print(f"[Schritt {steps_taken + 1}] {name} fehlgeschlagen: {e}")
+
+            tool_calls.append({"name": name, "args": args, "result": result})
 
             # NEU: Jedes Ergebnis als eigene "tool"-Nachricht mit passender ID
             messages.append({
