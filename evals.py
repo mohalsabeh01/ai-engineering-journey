@@ -3,6 +3,7 @@ import time
 import logging
 import unicodedata
 from main import run_agent
+from judge import judge
 
 # Jeder Fall: Frage, erwartete Tool-Aufrufe, Schlüsselwörter in der Antwort
 EVAL_CASES = [
@@ -54,6 +55,7 @@ EVAL_CASES = [
         "expected_tools": [],
         "must_contain": [],
         "must_contain_any": ["bestellnummer", "fahrer-id"],
+        "judge": True,
     },
 ]
 
@@ -97,6 +99,20 @@ def check_case(case, result):
     return problems
 
 
+def judge_case(case, result):
+    # Was die Tools wirklich zurückgegeben haben = die Daten für den Prüfer
+    data = "\n".join(
+        f"{c['name']}({c['args']}) -> {c['result']}" for c in result["tool_calls"]
+    ) or "(keine Daten: kein Tool wurde aufgerufen)"
+
+    verdict = judge(case["input"], data, result["answer"])
+    print(f"  Judge: {verdict['verdict']} | {verdict['reason']}")
+
+    if verdict["verdict"] != "PASS":
+        return [f"Judge: erfunden {verdict['invented']}"]
+    return []
+
+
 def run_evals(selected=None, pause_seconds=10):
     # NEU: nur ausgewählte Fälle laufen lassen (spart Anfragen)
     cases = [(nr, c) for nr, c in enumerate(EVAL_CASES, 1) if not selected or nr in selected]
@@ -106,6 +122,7 @@ def run_evals(selected=None, pause_seconds=10):
         print(f"\n===== [Fall {nr}] {case['name']} =====")
         try:
             result = run_agent(case["input"])
+            judge_problems = judge_case(case, result) if case.get("judge") else []
         except Exception as e:
             # NEU: technischer Fehler ist KEIN falsches Verhalten des Agenten
             errors += 1
@@ -113,7 +130,7 @@ def run_evals(selected=None, pause_seconds=10):
             print(f"   - {e}")
             logging.error(f"EVAL ERROR | {case['name']} | {e}")
         else:
-            problems = check_case(case, result)
+            problems = check_case(case, result) + judge_problems
             if problems:
                 failed += 1
                 print("  FAIL")
