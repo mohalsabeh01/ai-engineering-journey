@@ -15,7 +15,7 @@ logging.basicConfig(
     encoding="utf-8"
 )
 
-# --- Retry sichtbar machen (httpx für Gemini, httpx2 für das openai-SDK) ---
+# --- Retry sichtbar machen: HTTP-Logs mit 429/5xx in der Konsole zeigen ---
 RETRY_PATTERN = re.compile(r"HTTP/[\d.]+ (429|500|502|503|504)")
 
 
