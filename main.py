@@ -115,16 +115,17 @@ tools = [order_tool, driver_tool]
 
 
 # --- Agenten-Logik ---
-def run_agent(user_input, max_steps=5):
+def run_agent(user_input, history=None, max_steps=5):
     total_cost = 0.0
     tool_calls = []
     logging.info(f"Neue Anfrage [{MODEL}]: {user_input}")
 
-    # NEU: Wir verwalten den Gesprächsverlauf selbst (kein previous_interaction_id)
-    messages = [
-    {"role": "system", "content": SYSTEM_PROMPT},
-    {"role": "user", "content": user_input},
-    ]
+    # NEU: Mit history weitermachen, sonst neues Gespräch beginnen
+    if history is None:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    else:
+        messages = list(history)
+    messages.append({"role": "user", "content": user_input})
 
     response = client.chat.completions.create(
         model=MODEL,
@@ -140,10 +141,12 @@ def run_agent(user_input, max_steps=5):
         if not message.tool_calls:
             logging.info(f"Kosten dieser Anfrage: ${total_cost:.6f}")
             print(f"\nGesamtkosten dieser Anfrage: ${total_cost:.6f}")
+            messages.append({"role": "assistant", "content": message.content})
             return {
                 "answer": message.content,
                 "tool_calls": tool_calls,
                 "cost": total_cost,
+                "messages": messages,
             }
 
         # NEU: Die Tool-Anfrage des Modells kommt selbst in den Verlauf
@@ -202,6 +205,7 @@ def run_agent(user_input, max_steps=5):
         "answer": "Maximale Anzahl an Schritten erreicht.",
         "tool_calls": tool_calls,
         "cost": total_cost,
+        "messages": messages,
     }
 
 
