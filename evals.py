@@ -4,6 +4,7 @@ import logging
 import unicodedata
 from main import run_agent
 from judge import judge
+from chat import trim_history
 
 # Jeder Fall: Frage, erwartete Tool-Aufrufe, Schlüsselwörter in der Antwort
 EVAL_CASES = [
@@ -56,6 +57,17 @@ EVAL_CASES = [
         "must_contain": [],
         "must_contain_any": ["bestellnummer", "fahrer-id"],
         "judge": True,
+    },
+    {
+        "name": "Gespräch mit zweimal Kürzen",
+        "input": [
+            "Wie ist der Status von Bestellung 123?",
+            "Und Bestellung 456?",
+            "Was weißt du über Fahrer d1?",
+            "Nach welcher Bestellung habe ich zuerst gefragt?",
+        ],
+        "expected_tools": [],
+        "must_contain": ["123"],
     },
 ]
 
@@ -113,6 +125,15 @@ def judge_case(case, result):
     return []
 
 
+def run_conversation(questions):
+    # Wie chat.py: jede Frage einzeln, history wird gekürzt und weitergegeben
+    history = None
+    for question in questions:
+        result = run_agent(question, history=trim_history(history))
+        history = result["messages"]
+    return result  # Geprüft wird nur die letzte Antwort
+
+
 def run_evals(selected=None, pause_seconds=10):
     # NEU: nur ausgewählte Fälle laufen lassen (spart Anfragen)
     cases = [(nr, c) for nr, c in enumerate(EVAL_CASES, 1) if not selected or nr in selected]
@@ -121,7 +142,10 @@ def run_evals(selected=None, pause_seconds=10):
     for position, (nr, case) in enumerate(cases, 1):
         print(f"\n===== [Fall {nr}] {case['name']} =====")
         try:
-            result = run_agent(case["input"])
+            if isinstance(case["input"], list):
+                result = run_conversation(case["input"])
+            else:
+                result = run_agent(case["input"])
             judge_problems = judge_case(case, result) if case.get("judge") else []
         except Exception as e:
             # NEU: technischer Fehler ist KEIN falsches Verhalten des Agenten
