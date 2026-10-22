@@ -22,6 +22,7 @@ pycparser==3.0
 pydantic==2.13.5
 pydantic_core==2.46.5
 python-dotenv==1.2.3
+rank-bm25==0.2.2
 requests==2.34.2
 sniffio==1.3.1
 tenacity==9.1.4
